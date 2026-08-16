@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NMAP Port Scanner</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --border: #dfe3e8;
+      --text: #1c2024;
+      --muted: #6b7480;
+      --accent: #e4172b;
+      --added: #1a7f37;
+      --added-bg: #e6f4ea;
+      --removed: #c0392b;
+      --removed-bg: #fdecea;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 2.5rem 1.25rem;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 760px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+    .sub { color: var(--muted); margin: 0 0 1.75rem; }
+    form { display: flex; gap: .5rem; margin-bottom: 1.5rem; }
+    input {
+      flex: 1; padding: .7rem .85rem; font-size: 1rem;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+      color: var(--text);
+    }
+    input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    button {
+      padding: .7rem 1.35rem; font-size: 1rem; font-weight: 600; cursor: pointer;
+      border: 0; border-radius: 8px; background: var(--accent); color: #fff;
+      width: 8.5rem; text-align: center;
+    }
+    .btn-dots { display: inline-block; width: 1.2em; text-align: left; }
+    button:disabled { opacity: .55; cursor: progress; }
+    section {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 10px; padding: 1.1rem 1.25rem; margin-bottom: 1rem;
+    }
+    h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em;
+         color: var(--muted); margin: 0 0 .75rem; }
+    h3 { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em;
+         color: var(--muted); margin: 1rem 0 .5rem; }
+    .hidden { display: none; }
+    .error { border-color: var(--removed); color: var(--removed); background: var(--removed-bg); }
+    .error-message { margin: 0; }
+    .scan-time { margin: .5rem 0 0; font-size: .85rem; }
+    .ports { display: flex; flex-wrap: wrap; gap: .4rem; }
+    .port {
+      font-family: var(--mono); font-size: .85rem; padding: .2rem .55rem;
+      border: 1px solid var(--border); border-radius: 5px; background: var(--bg);
+    }
+    .port.add { color: var(--added); background: var(--added-bg); border-color: var(--added); }
+    .port.rem { color: var(--removed); background: var(--removed-bg); border-color: var(--removed); }
+    .none { color: var(--muted); font-style: italic; }
+    .diff-row { display: flex; align-items: baseline; gap: .6rem; margin-bottom: .5rem; }
+    .diff-label { font-size: .8rem; color: var(--muted); min-width: 4.5rem; }
+    table { width: 100%; border-collapse: collapse; }
+    .history-toggle {
+      background: none; border: 0; padding: .5rem 0 0; margin: 0;
+      font-size: .82rem; font-weight: 600; color: var(--accent); cursor: pointer;
+    }
+    .history-toggle:hover:not(:disabled) { text-decoration: underline; }
+    .history-toggle:disabled { opacity: .4; cursor: not-allowed; }
+    .history-nav { display: flex; align-items: center; gap: .85rem; margin-top: .5rem; }
+    .history-page-label { font-size: .8rem; color: var(--muted); }
+    .history-filler { visibility: hidden; }
+    th, td { text-align: left; padding: .5rem .4rem; border-bottom: 1px solid var(--border); }
+    th { font-size: .75rem; text-transform: uppercase; color: var(--muted); letter-spacing: .05em; }
+    tr:last-child td { border-bottom: 0; }
+    td.time { white-space: nowrap; font-family: var(--mono); font-size: .82rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>NMAP Port Scanner</h1>
+    <p class="sub">Scan hosts for open TCP ports 0&ndash;1000 and track what changed since last time.</p>
+
+    <form id="scan-form">
+      <input id="target" name="target"
+             placeholder="IP address or hostname, comma-separated (e.g. localhost, scanme.nmap.org)"
+             autocomplete="off" autofocus required>
+      <button id="submit" type="submit">Scan</button>
+    </form>
+
+    <section id="request-error" class="error hidden" role="alert"></section>
+
+    <div id="results"></div>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
