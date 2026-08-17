@@ -43,8 +43,9 @@ a 404. Not having any history is a perfectly normal answer.
 **Status codes:** both endpoints return `200`, even when a multi target
 `POST` only partially succeeds. `400` is reserved for a malformed request.
 `503` shows up if the database can't be reached. `POST` doesn't return `201`
-because a scan is immutable and one request can create several at once, so
-there's no single URI to point back to anyway.
+because there's no per resource `GET /scans/{id}` endpoint. Scans are only
+retrievable in aggregate via `GET /scans`, so there's no single URI to put
+in `Location`.
 
 ## 2. Database Schema
 
