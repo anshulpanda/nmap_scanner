@@ -117,3 +117,35 @@ Coverage covers both the smaller components (port diffing, host validation, pars
 nmap's output) and the full request cycle through FastAPI's `TestClient`:
 routing, DB writes, how the diff and history get assembled, per target
 errors, and the `503` path.
+
+## 6. Future Considerations
+
+A few ideas came up during design that this project doesn't need yet.
+Noted here instead of built.
+
+### 6.1 A hosts table
+
+A separate `hosts` table with `scans.host_id` as a foreign key would let
+the database enforce host identity instead of code. But `storage.save_scan()`
+is already the only place a scan gets written, so normalizing `target` there
+gives the same guarantee without a third table. The real case for a `hosts`
+table is future features like nicknames or alert thresholds, none of which exist today. Worth adding once one of those becomes a requirement.
+
+### 6.2 Pagination
+
+`GET /v1/scans` returns a host's full history in one response, with no
+`limit`/`offset`. Every call is scoped to a single host through the required
+`target` param, and at this project's scale that history isn't going to get
+large enough to matter. It could become worth adding if a host is ever
+scanned frequently enough, over a long enough period, for that response to
+get slow.
+
+### 6.3 Treating a hostname and its IP as the same host
+
+`localhost` and `127.0.0.1` are stored as two separate targets today, even
+though they often resolve to the same machine. It is also a shaky basis
+for defining "same host," since a hostname's IP can change over time. A
+machine that gets replaced behind the same hostname would look unchanged,
+and a hostname that legitimately moves to a new machine would look like a
+brand new host. This is a reasonable feature to build once there is a
+concrete need for it, and it is fine to leave out for now.
