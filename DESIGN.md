@@ -2,19 +2,20 @@
 
 ## 1. Resource & API Design
 
-`scans` is the one resource. Two endpoints:
+`scans` is the one resource. There are two endpoints:
 
 | Endpoint | Method | Side effects | Purpose |
 |---|---|---|---|
 | `POST /v1/scans` | Writes | Runs `nmap`, writes to DB | Scan one or more hosts, then return each host's full history |
-| `GET /v1/scans?target=` | Read-only | None | Read a host's stored scan history, without scanning |
+| `GET /v1/scans?target=` | Read only | None | Read a host's stored scan history, without scanning |
 
-Split into two endpoints so `GET` can never accidentally trigger a scan.
+They're split into two endpoints so a `GET` can never accidentally trigger a scan.
 
-**`POST /v1/scans`** — always takes a list of targets (even for one host) and
-scans them concurrently. Per target, the response includes the new scan, a
-diff against the previous one, and the full history — no follow-up `GET`
-needed:
+**`POST /v1/scans`** always takes a list of targets, even if it's just one
+host. It scans them all concurrently. For each target, the response includes
+the new scan, a diff against the previous one, and the full history, so you
+never need to make a second request just to see it:
+
 ```json
 {
   "results": [
@@ -31,21 +32,25 @@ needed:
   ]
 }
 ```
-One `results` entry per target: `ok: true` + `result`, or `ok: false` + `error` — never both.
 
-**`GET /v1/scans?target=`** — `target` is required (no "all hosts" use case).
-A never-scanned host returns an empty list, not a `404`.
+Each target gets one entry in `results`, either `ok: true` with a `result`,
+or `ok: false` with an `error`. Never both.
 
-**Status codes:** `200` for both endpoints, even partial success in a
-multi-target `POST`. `400` for a malformed request. `503` if the database is
-unreachable. No `201` on `POST` — a scan is immutable and one request can
-create several, so there's no single URI to redirect to.
+**`GET /v1/scans?target=`** requires `target`; there's no "give me every
+host" mode. A host that's never been scanned just returns an empty list, not
+a 404. Not having any history is a perfectly normal answer.
+
+**Status codes:** both endpoints return `200`, even when a multi target
+`POST` only partially succeeds. `400` is reserved for a malformed request.
+`503` shows up if the database can't be reached. `POST` doesn't return `201`
+because a scan is immutable and one request can create several at once, so
+there's no single URI to point back to anyway.
 
 ## 2. Database Schema
 
-Two tables — a scan has one target but many ports, so a variable-length port
-list gets its own table instead of one packed column:
-
+There are two tables. A scan has one target but many ports, and cramming a
+list of ports into a single column would make a query like "every scan where
+port 8080 was open" painful: you'd be stuck doing string matching (`LIKE '%,8080,%'`) instead of an indexed lookup. So instead:
 ```
 scans                          open_ports
   id            PK               id           PK
@@ -53,31 +58,37 @@ scans                          open_ports
   scanned_at    DATETIME         port         INT
 ```
 
-- Composite index `(target, scanned_at)` on `scans` covers the one read
-  query ("scans for target X, newest first") — filter and sort in one index.
-- Index on `open_ports.scan_id` for the join back to `scans`.
-- `storage.get_history()` uses `joinedload(Scan.ports)` to avoid N+1.
-- `scans.target` is not unique — many rows per target is the point.
+- The composite index `(target, scanned_at)` on `scans` covers the only read
+  query we actually run: scans for target X, newest first. One index handles
+  both the filter and the sort.
+- `open_ports.scan_id` is indexed too, for the join back to `scans`.
+- `storage.get_history()` uses `joinedload(Scan.ports)` so it doesn't end up
+  running an extra query per scan.
+- `scans.target` is intentionally not unique. Having many rows per target is
+  the point of keeping history.
 
 ## 3. Objects in the Design
 
-Storage and API are separate class hierarchies, so a DB-only change can't
-silently change what a client receives.
+Storage and the API are two separate sets of classes, so a change to how
+something's stored doesn't quietly change what a client sees.
 
-**`models.py`** (SQLAlchemy — how a scan is stored)
-- `Scan` — one row per scan: `id`, `target`, `scanned_at`, ports relationship
-- `OpenPort` — one row per open port on a scan
+**`models.py`** (SQLAlchemy, how a scan is stored)
+- `Scan`: one row per scan, `id`, `target`, `scanned_at`, plus a relationship
+  to its ports
+- `OpenPort`: one row per open port on a scan
 
-**`schemas.py`** (Pydantic — what the API sends/receives)
-- `ScanRequest` — incoming `{"targets": [...]}`
-- `ScanResult` — one scan, used for both `current_scan` and each `history` entry
-- `PortDiff` — `{"added": [...], "removed": [...]}`
-- `ScanResponse` — `target` + `current_scan` + `diff` + `history`
-- `BatchScanItem` / `BatchScanResponse` — per-target `ok`/`result`/`error` wrapper
+**`schemas.py`** (Pydantic, what the API sends and receives)
+- `ScanRequest`: the incoming `{"targets": [...]}`
+- `ScanResult`: one scan, reused for both `current_scan` and each entry in
+  `history`
+- `PortDiff`: `{"added": [...], "removed": [...]}`
+- `ScanResponse`: `target` plus `current_scan`, `diff`, and `history`
+- `BatchScanItem` / `BatchScanResponse`: the wrapper that carries an
+  `ok`/`result`/`error` per target
 
 ## 4. Error Handling
 
-Three tiers:
+There are three tiers:
 
 | Failure | Scope | Response |
 |---|---|---|
@@ -85,19 +96,23 @@ Three tiers:
 | Invalid host syntax, unresolvable host, `nmap` failure | One target | `200` overall; that target's entry is `{"ok": false, "error": "..."}` |
 | Database unreachable | Any DB read/write | `503` + `{"detail": "Database is unavailable. Please try again shortly."}` |
 
-Targets are validated before `nmap` runs and before anything is written, so a
-bad target is never scanned or stored — and it only fails its own entry, not
-the whole request. The `503` handler catches connection-level failures only
-(`OperationalError`), so real data bugs still surface as errors instead of
-being masked. An access-log middleware records every response's method, path,
-status, and duration.
+Every target gets validated before `nmap` even runs and before anything gets
+written, so a bad target is never scanned or stored in the first place. And
+if one target in a batch is bad, it only fails its own entry, not the whole
+request. The `503` handler only catches connection level failures
+(`OperationalError`), so an actual data bug still shows up as a real error
+instead of getting hidden behind a generic "try again" message. There's also
+an access log middleware that records the method, path, status, and duration
+of every response.
 
 ## 5. Testing
 
-89 tests in `tests/unit_tests/`, 97% coverage. Fully hermetic — SQLite
-in-memory instead of MySQL, every `nmap` call mocked — so no real database,
-`nmap`, or network access is needed to run it.
+There are 89 tests in `tests/unit_tests/`, with 97% coverage. None of it
+touches a live system: the database is SQLite running in memory instead of
+MySQL, and every `nmap` call is mocked. You don't need a real database,
+`nmap`, or network access to run the suite.
 
-Coverage spans pure-function tests (diffing, host validation, output
-parsing) and full-request tests via FastAPI's `TestClient` (routing, DB
-writes, diff/history assembly, per-target errors, the `503` path).
+Coverage covers both the smaller components (port diffing, host validation, parsing
+nmap's output) and the full request cycle through FastAPI's `TestClient`:
+routing, DB writes, how the diff and history get assembled, per target
+errors, and the `503` path.
